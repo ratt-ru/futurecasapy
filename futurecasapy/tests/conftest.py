@@ -1,11 +1,11 @@
 import os
 
 import numpy as np
-import pyrap.tables as pt
 import pytest
 
 @pytest.fixture
 def ms(tmp_path_factory):
+    import pyrap.tables as pt
     msdir = tmp_path_factory.mktemp("msdir", numbered=True)
     fn = os.path.join(str(msdir), "test.ms")
 

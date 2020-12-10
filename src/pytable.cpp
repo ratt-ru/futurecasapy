@@ -27,7 +27,9 @@ PYBIND11_MODULE(pytable, m)
 {
     m.def("record_example", [](const Record & record) {
         std::cout << "Got a record: " << record << std::endl;
+        return record;
     });
+
 
     // Note that all constructors must have a different number of arguments.
     py::class_<TableProxy> (m, "Table")
