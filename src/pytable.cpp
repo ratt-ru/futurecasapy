@@ -8,6 +8,7 @@
 #undef NDEBUG
 
 #include <casacore/tables/Tables/TableProxy.h>
+#include <casacore/casa/Containers/ValueHolder.h>
 #include <casacore/python/Converters/PycBasicData.h>
 #include <casacore/python/Converters/PycValueHolder.h>
 #include <casacore/python/Converters/PycRecord.h>
@@ -25,12 +26,25 @@ namespace python {
 
 PYBIND11_MODULE(pytable, m)
 {
-    m.def("record_example", [](const Record & record) {
+    m.def("record_convert", [](Record record) {
         std::cout << "Got a record: " << record << std::endl;
-        return record;
-    });
+        return std::move(record);
+    }, py::return_value_policy::move);
 
+    m.def("valueholder_convert", [](ValueHolder vh) {
+        std::cout << "Got a Valueholder: " << vh << std::endl;
+        return std::move(vh);
+    }, py::return_value_policy::move);
 
+    m.def("casa_string_convert", [](casacore::String str) {
+        std::cout << "Got a string: " << str << std::endl;
+        return std::move(str);
+    }, py::return_value_policy::move);
+
+    m.def("string_convert", [](std::string str) {
+        std::cout << "Got a string: " << str << std::endl;
+        return std::move(str);
+    }, py::return_value_policy::move);
     // Note that all constructors must have a different number of arguments.
     py::class_<TableProxy> (m, "Table")
     .def(py::init<>())
