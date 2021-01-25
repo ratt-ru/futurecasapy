@@ -22,14 +22,13 @@ def test_casa_table_open(ms):
     {},
 ])
 def test_record_convert(inputs):
-    result = record_conver(inputs)
-    a = 1
+    assert inputs == record_convert(inputs)
+
 
 @pytest.mark.parametrize("inputs", [
     "Septimus Thripp",
 ])
 @pytest.mark.parametrize("string_type", ["std", "casa"])
-# @pytest.mark.parametrize("string_type", ["std"])
 def test_string_convert(inputs, string_type):
     if string_type == "std":
         result = string_convert(inputs)
@@ -47,8 +46,12 @@ def test_string_convert(inputs, string_type):
     {"hello": "world"},
     {"hello": {"this": {"brave": {"new": "world"}}}},
     {"hello": {"this": {"brave": {"new": "world", "with": 456.0, "lots of": 2, "stuff": 3 + 4j}}}},
+    np.array([[0, 1, 2], [3, 4, 5]], np.complex64).T,
     np.array([[0, 1, 2], [3, 4, 5]], np.complex128).T,
 ])
 def test_valueholder_convert(inputs):
     result = valueholder_convert(inputs)
+    assert result == inputs
+    # print(type(result))
+    # print(result.shape, inputs.shape, result.dtype, result.data, len(result.data))
 

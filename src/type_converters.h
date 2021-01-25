@@ -22,7 +22,7 @@ using NPY_TYPE = py::detail::npy_api::constants;
 template <typename C>
 struct CasaTypeTraits
 {
-    static const valid = false;
+    static const bool valid = false;
     using CASA_TYPE = C;
     using CPP_TYPE = void;
     static const NPY_TYPE npy_type = py::detail::npy_api::NPY_BOOL_;
@@ -30,7 +30,7 @@ struct CasaTypeTraits
 };
 
 template <> struct CasaTypeTraits<casacore::Bool> {
-    static const valid = true;
+    static const bool valid = true;
     using CASA_TYPE = casacore::Bool;
     using CPP_TYPE = bool;
     static const NPY_TYPE npy_type = py::detail::npy_api::NPY_BOOL_;
@@ -39,10 +39,27 @@ template <> struct CasaTypeTraits<casacore::Bool> {
 
 
 template <> struct CasaTypeTraits<casacore::String> {
-    static const valid = true;
+    static const bool valid = true;
     using CASA_TYPE = casacore::String;
     using CPP_TYPE = std::string;
     static const NPY_TYPE npy_type = py::detail::npy_api::NPY_STRING_;
+    static const bool equivalent = std::is_same<CASA_TYPE, CPP_TYPE>::value;
+};
+
+
+template <> struct CasaTypeTraits<casacore::Complex> {
+    static const bool valid = true;
+    using CASA_TYPE = casacore::Complex;
+    using CPP_TYPE = std::complex<float>;
+    static const NPY_TYPE npy_type = py::detail::npy_api::NPY_CFLOAT_;
+    static const bool equivalent = std::is_same<CASA_TYPE, CPP_TYPE>::value;
+};
+
+template <> struct CasaTypeTraits<casacore::DComplex> {
+    static const bool valid = true;
+    using CASA_TYPE = casacore::DComplex;
+    using CPP_TYPE = std::complex<double>;
+    static const NPY_TYPE npy_type = py::detail::npy_api::NPY_CDOUBLE_;
     static const bool equivalent = std::is_same<CASA_TYPE, CPP_TYPE>::value;
 };
 
@@ -123,11 +140,36 @@ public:
                 { throw std::runtime_error("Non-contiguous array"); }
         }
 
+        value = casacore::Array<T>(casa_shape, (T *) array.data(), casacore::SHARE);
+
         return true;
     }
 
     static handle cast(casacore::Array<T> src, return_value_policy /* policy */, handle /* parent */)
-        { return py::none().release(); }
+    {
+        using CT = CasaTypeTraits<T>;
+
+        auto ndim = src.ndim();
+        std::vector<py::ssize_t> shape;
+        auto & casa_shape = src.shape();
+
+        for(decltype(ndim) d=0; d < ndim; ++d)
+            { shape.push_back(casa_shape[ndim-d-1]); }
+
+        casacore::Array<T> * saved = new casacore::Array<T>(src);
+        bool delete_storage = false;
+        auto * storage = (typename CT::CPP_TYPE *) saved->getStorage(delete_storage);
+        auto capsule = py::capsule(saved, [](void * p) {
+            std::cout << "Deleting " << p << std::endl;
+            delete reinterpret_cast<casacore::Array<T> *>(p);
+        });
+
+        if(delete_storage) {
+            throw std::runtime_error("should delete storage!");
+        }
+
+        return py::array(shape, storage, capsule);
+    }
 };
 
 
@@ -152,19 +194,15 @@ public:
         bool is_array = numpy_api.PyArray_Check_(src.ptr());
 
         if(is_none) {
-            // std::cout << "None ValueHolder" << std::endl;
             value = casacore::ValueHolder(0, true);
             return true;
         } else if(is_bool) {
-            // std::cout << "bool ValueHolder" << std::endl;
             value = casacore::ValueHolder(src.cast<bool>());
             return true;
         } else if(is_long) {
-            // std::cout << "long ValueHolder" << std::endl;
             value = casacore::ValueHolder(casacore::Int64(src.cast<int64_t>()));
             return true;
         } else if(is_double) {
-            // std::cout << "double ValueHolder" << std::endl;
             value = casacore::ValueHolder(src.cast<double>());
             return true;
         } else if(is_complex) {
@@ -274,15 +312,14 @@ public:
                 {
                     std::string s = src.asString();
                     return py::cast<std::string>(std::move(s)).release();
+                    break;
                 }
-                // return py::str(src.asString());
-                break;
 	        case casacore::TpRecord:
                 {
                     casacore::Record r = src.asRecord();
                     return py::cast<casacore::Record>(std::move(r)).release();
+                    break;
                 }
-                break;
             // case casacore::TpLDouble:
 	        case casacore::TpArrayBool:
             case casacore::TpArrayChar:
@@ -296,7 +333,19 @@ public:
             case casacore::TpArrayDouble:
             // case casacore::TpArrayLDouble:
             case casacore::TpArrayComplex:
+                {
+                    using CT = casacore::Array<casacore::Complex>;
+                    CT array;
+                    array.reference(src.asArrayComplex());
+                    return py::cast<CT>(std::move(array)).release();
+                }
             case casacore::TpArrayDComplex:
+                {
+                    using CT = casacore::Array<casacore::DComplex>;
+                    CT array;
+                    array.reference(src.asArrayDComplex());
+                    return py::cast<CT>(std::move(array)).release();
+                }
             case casacore::TpArrayString:
                 throw std::runtime_error("Arrays not implemented");
                 break;
