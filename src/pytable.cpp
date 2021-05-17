@@ -7,6 +7,7 @@
 
 #undef NDEBUG
 
+#include <casacore/casa/Containers/Block.h>
 #include <casacore/tables/Tables/TableProxy.h>
 #include <casacore/casa/Containers/ValueHolder.h>
 #include <casacore/python/Converters/PycBasicData.h>
@@ -20,29 +21,44 @@
 
 namespace py = pybind11;
 
+
 namespace casacore {
 namespace python {
 
 
 PYBIND11_MODULE(pytable, m)
 {
+    casacore::Block<casacore::Complex>::setTraceSize(1);
+
+    m.def("test_capsule_base", [](py::object o)
+    {
+        py::ssize_t count = 128;
+        auto * ptr = new std::complex<float>[count];
+
+        // auto capsule = py::capsule(ptr, [](void * p) {
+        //     std::cout << "DEADBEAF" << std::endl;
+        //     delete [] reinterpret_cast<decltype(ptr)>(p);;
+        // });
+
+        return py::array(count, ptr, o);
+    });
+
     m.def("record_convert", [](Record record) {
         std::cout << "Got a record: " << record << std::endl;
-        return std::move(record);
-    }, py::return_value_policy::move);
+        return record;
+    });
 
-    m.def("valueholder_convert", [](ValueHolder vh) {
-        std::cout << "Got a Valueholder: " << vh << std::endl;
-        return std::move(vh);
-    }, py::return_value_policy::move);
+    m.def("valueholder_convert", [](casacore::ValueHolder vh) {
+        std::cout << "Got a valueholder: " << vh << std::endl;
+        return vh;
+    });
 
     m.def("casa_string_convert", [](casacore::String str) {
         std::cout << "Got a string: " << str << std::endl;
-        return std::move(str);
-    }, py::return_value_policy::move);
+        return str;
+    });
 
     m.def("string_convert", [](std::string str) {
-        std::cout << "Got a string: " << str << std::endl;
         return std::move(str);
     }, py::return_value_policy::move);
     // Note that all constructors must have a different number of arguments.

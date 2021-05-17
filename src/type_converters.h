@@ -1,4 +1,5 @@
 #include <iostream>
+#include <memory>
 #include <type_traits>
 
 #include <casacore/casa/Containers/Record.h>
@@ -11,8 +12,112 @@
 #error Only Python 3 supported
 #endif
 
-
 namespace py = pybind11;
+
+
+class ManagedValueHolder
+{
+private:
+    casacore::ValueHolder vh;
+    py::handle h;
+
+
+public:
+    ManagedValueHolder() :
+        vh(),
+        h()
+        {};
+
+    ManagedValueHolder(casacore::ValueHolder vh, py::handle handle) :
+        vh(vh),
+        h(handle)
+        {}
+
+    ManagedValueHolder(ManagedValueHolder & other) :
+        vh(other.vh),
+        h(other.h)
+        {}
+
+    ManagedValueHolder(ManagedValueHolder && other) :
+        vh(std::move(other.vh)),
+        h(std::move(other.h))
+        {}
+
+    ManagedValueHolder & operator=(ManagedValueHolder other)
+    {
+        std::swap(vh, other.vh);
+        std::swap(h, other.h);
+        return *this;
+    }
+};
+
+
+template <typename T> class ManagedArray
+{
+private:
+    using A = casacore::Array<T>;
+    using PTR = std::shared_ptr<A>;
+
+private:
+    bool owned_;
+    PTR array_;
+public:
+    explicit ManagedArray(const casacore::IPosition & shape, T * buffer, bool owned=false):
+        owned_(owned),
+        array_(std::make_shared<A>(shape, buffer, casacore::SHARE))
+        {
+            std::cout << "ManagedArray(shape, buffer, owned): " << array_.get() << std::endl;
+        }
+
+    ManagedArray(const casacore::Array<T> & array, bool owned=true) :
+        owned_(owned),
+        array_(std::make_shared<A>(array))
+        {
+            std::cout << "ManagedArray(array, owned): " << array_.get() << std::endl;
+
+        }
+
+    ManagedArray() :
+        owned_(false),
+        array_(nullptr)
+        {
+            std::cout << "ManagedArray(): " << array_.get() << std::endl;
+        }
+
+    ManagedArray(const ManagedArray & other) :
+        owned_(other.owned_),
+        array_(other.array_)
+        {
+            std::cout << "ManagedArray(other&): " << array_.get() << std::endl;
+
+        }
+
+    ManagedArray(ManagedArray && other) :
+        owned_(other.owned_),
+        array_(std::move(other.array_)) {
+            std::cout << "ManagedArray(other&&): " << array_.get() << std::endl;
+
+        }
+
+    ManagedArray & operator=(ManagedArray other)
+    {
+        std::cout << "ManagedArray::operator=(other): " << array_.get() << std::endl;
+        std::swap(this->owned_, other.owned_);
+        std::swap(this->array_, other.array_);
+        return *this;
+    }
+
+public:
+    bool owned(void) const
+        { return this->owned_; }
+
+    const PTR ptr(void) const
+        { return this->array_; }
+
+    const casacore::Array<T> & array(void) const
+        { return *this->array_.get(); }
+
+};
 
 namespace pybind11 {
 namespace detail {
@@ -86,12 +191,99 @@ public:
 };
 
 
-template <typename T> struct type_caster<casacore::Array<T>> {
+// template <typename T> struct type_caster<casacore::Array<T>> {
+// public:
+//     PYBIND11_TYPE_CASTER(casacore::Array<T>, _("casacore::Array<T>"));
+//     bool load(handle src, bool convert)
+//     {
+
+//         if(!src)
+//             { return false; }
+
+//         const auto &numpy_api = detail::npy_api::get();
+//         if(!numpy_api.PyArray_Check_(src.ptr()))
+//             { return false; };
+
+//         auto array = py::cast<py::array>(src.ptr());
+//         auto ndim = array.ndim();
+//         auto flags = array.flags();
+//         const auto & shape = array.shape();
+
+//         std::cout << "Casting python to casacore<Array<T>> "
+//                   << shape << std::endl;
+
+//         // Copy the array if its not contiguous or aligned
+//         // TODO(sjperkins)
+//         // Should also copy if endianess differs
+//         auto is_contiguous = ((flags & numpy_api.NPY_ARRAY_C_CONTIGUOUS_) ||
+//                               (flags & numpy_api.NPY_ARRAY_F_CONTIGUOUS_));
+//         auto is_aligned = (flags & numpy_api.NPY_ARRAY_ALIGNED_);
+
+//         if(!is_contiguous || !is_aligned) {
+//             array = array.attr("copy")();
+//         }
+
+//         // Swap axes, CASA order is row minor,
+//         // Numpy is row major.
+//         casacore::IPosition casa_shape(1, 1);
+
+//         if(ndim > 0)
+//         {
+//             casa_shape.resize(ndim);
+//             for(int d=0; d < ndim; ++d)
+//                 { casa_shape[d] = shape[ndim-d-1]; }
+//         }
+
+//         if(casa_shape.product() > 0)
+//         {
+//             flags = array.flags();
+
+//             is_contiguous = ((flags & numpy_api.NPY_ARRAY_C_CONTIGUOUS_) ||
+//                              (flags & numpy_api.NPY_ARRAY_F_CONTIGUOUS_));
+
+//             if(!is_contiguous)
+//                 { throw std::runtime_error("Non-contiguous array"); }
+//         }
+
+//         auto tmp = ManagedArray<T>(casa_shape, (T *) array.data());
+
+//         value = casacore::Array<T>(casa_shape, (T *) array.data(), casacore::SHARE);
+
+//         return true;
+//     }
+
+//     static handle cast(casacore::Array<T> src, return_value_policy /* policy */, handle /* parent */)
+//     {
+//         using CT = CasaTypeTraits<T>;
+
+//         auto ndim = src.ndim();
+//         std::vector<py::ssize_t> shape;
+//         auto & casa_shape = src.shape();
+
+//         for(decltype(ndim) d=0; d < ndim; ++d)
+//             { shape.push_back(casa_shape[ndim-d-1]); }
+
+//         casacore::Array<T> * saved = new casacore::Array<T>(src);
+//         bool delete_storage = false;
+//         auto * storage = (typename CT::CPP_TYPE *) saved->getStorage(delete_storage);
+//         auto capsule = py::capsule(saved, [](void * p) {
+//             // std::cout << "Deleting " << p << std::endl;
+//             delete reinterpret_cast<casacore::Array<T> *>(p);
+//         });
+
+//         if(delete_storage) {
+//             throw std::runtime_error("should delete storage!");
+//         }
+
+//         return py::array(shape, storage, capsule);
+//     }
+// };
+
+template <typename T> struct type_caster<ManagedArray<T>> {
 public:
-    PYBIND11_TYPE_CASTER(casacore::Array<T>, _("casacore::Array<T>"));
+    PYBIND11_TYPE_CASTER(ManagedArray<T>, _("ManagedArray<T>"));
     bool load(handle src, bool convert)
     {
-
         if(!src)
             { return false; }
 
@@ -103,9 +295,6 @@ public:
         auto ndim = array.ndim();
         auto flags = array.flags();
         const auto & shape = array.shape();
-
-        std::cout << "Casting python to casacore<Array<T>> "
-                  << shape << std::endl;
 
         // Copy the array if its not contiguous or aligned
         // TODO(sjperkins)
@@ -129,6 +318,10 @@ public:
                 { casa_shape[d] = shape[ndim-d-1]; }
         }
 
+        // std::cout << "Casting python to casacore<Array<T>> "
+        //           << casa_shape << std::endl;
+
+
         if(casa_shape.product() > 0)
         {
             flags = array.flags();
@@ -140,35 +333,61 @@ public:
                 { throw std::runtime_error("Non-contiguous array"); }
         }
 
-        value = casacore::Array<T>(casa_shape, (T *) array.data(), casacore::SHARE);
+        // Create a ManagedArray, Python owns the storage, not C++
+        value = ManagedArray<T>(casa_shape, (T *) array.data(), false);
 
         return true;
     }
 
-    static handle cast(casacore::Array<T> src, return_value_policy /* policy */, handle /* parent */)
+    static handle cast(ManagedArray<T> src, return_value_policy /* policy */, handle /* parent */)
     {
         using CT = CasaTypeTraits<T>;
 
-        auto ndim = src.ndim();
+        auto ndim = src.array().ndim();
         std::vector<py::ssize_t> shape;
-        auto & casa_shape = src.shape();
+        auto & casa_shape = src.array().shape();
 
         for(decltype(ndim) d=0; d < ndim; ++d)
             { shape.push_back(casa_shape[ndim-d-1]); }
 
-        casacore::Array<T> * saved = new casacore::Array<T>(src);
-        bool delete_storage = false;
-        auto * storage = (typename CT::CPP_TYPE *) saved->getStorage(delete_storage);
-        auto capsule = py::capsule(saved, [](void * p) {
-            std::cout << "Deleting " << p << std::endl;
-            delete reinterpret_cast<casacore::Array<T> *>(p);
-        });
+        if(src.owned())
+        {
+            std::cout << "Owned storage" << std::endl;
+            // C++ owns the storage, so the buffers must live as long as there's
+            // a Python object pointing at it
+            bool delete_storage = false;
+            auto * saved = new ManagedArray<T>(src);
+            auto * storage = (typename CT::CPP_TYPE *) saved->array().getStorage(delete_storage);
+            auto capsule = py::capsule(saved, [](void * p)
+            {
+                auto ptr = reinterpret_cast<decltype(saved)>(p);
+                std::cout << "Removing owned storage " << ptr->ptr().get() << std::endl;
 
-        if(delete_storage) {
-            throw std::runtime_error("should delete storage!");
+                // delete reinterpret_cast<ManagedArray<T> *>(p);
+            });
+
+            if(delete_storage)
+                { throw std::runtime_error("Unhandled storage deletion case!"); }
+
+            return py::array(shape, storage, capsule);
+        } else {
+            // C++ does not own the storage, so create a noop capsule to ensure that
+            // the underlying base isn't released
+            // TODO(sjperkins)
+            // there's probably a way to set the base to null to avoid the capsule
+            std::cout << "UnOwned storage" << std::endl;
+            bool delete_storage = false;
+            auto * storage = (typename CT::CPP_TYPE *) src.array().getStorage(delete_storage);
+
+            if(delete_storage)
+                { throw std::runtime_error("Unhandled storage deletion case!"); }
+
+            auto capsule = py::capsule((void *) 12345, [](void * p) {
+                std::cout << "Empty capsule" << std::endl;
+            });
+
+            return py::array(shape, storage, capsule);
         }
-
-        return py::array(shape, storage, capsule);
     }
 };
 
@@ -206,7 +425,6 @@ public:
             value = casacore::ValueHolder(src.cast<double>());
             return true;
         } else if(is_complex) {
-            std::cout << "complex ValueHolder" << std::endl;
             value = casacore::ValueHolder(src.cast<std::complex<double>>());
             return true;
         } else if(is_string) {
@@ -216,14 +434,27 @@ public:
             auto array_proxy = py::detail::array_proxy(src.ptr());
             auto desc = py::detail::array_descriptor_proxy(array_proxy->descr);
 
+            std::cout << "Found an array" << std::endl;
+            std::cout << "Kind: " << desc->kind
+                      << " Type: " << desc->type
+                      << " TypeNum: " << desc->type_num
+                      << " ByteOrder: " << int(desc->byteorder) << std::endl;
+
+
             switch(desc->type_num)
             {
                 case numpy_api.NPY_CFLOAT_:
-                    value = casacore::ValueHolder(src.cast<casacore::Array<casacore::Complex>>());
+                {
+                    auto array = src.cast<ManagedArray<casacore::Complex>>().array();
+                    value = casacore::ValueHolder(array);
                     return true;
+                }
                 case numpy_api.NPY_CDOUBLE_:
-                    value = casacore::ValueHolder(src.cast<casacore::Array<casacore::DComplex>>());
+                {
+                    auto array = src.cast<ManagedArray<casacore::DComplex>>().array();
+                    value = casacore::ValueHolder(array);
                     return true;
+                }
                 // case numpy_api.NPY_BOOL_:
                 // case numpy_api.NPY_BYTE_:
                 // case numpy_api.NPY_UBYTE_:
@@ -258,15 +489,8 @@ public:
                     break;
             }
 
-            // std::cout << "Found an array" << std::endl;
-            // std::cout << "Kind: " << desc->kind
-            //           << " Type: " << desc->type
-            //           << " TypeNum: " << desc->type_num
-            //           << " ByteOrder: " << int(desc->byteorder) << std::endl;
-
             return false;
         } else if(is_dict) {
-            // std::cout << "dict ValueHolder" << std::endl;
             value = casacore::ValueHolder(src.cast<casacore::Record>());
             return true;
         }
@@ -334,17 +558,13 @@ public:
             // case casacore::TpArrayLDouble:
             case casacore::TpArrayComplex:
                 {
-                    using CT = casacore::Array<casacore::Complex>;
-                    CT array;
-                    array.reference(src.asArrayComplex());
-                    return py::cast<CT>(std::move(array)).release();
+                    using CT = ManagedArray<casacore::Complex>;
+                    return py::cast<CT>(std::move(CT(src.asArrayComplex(), false))).release();
                 }
             case casacore::TpArrayDComplex:
                 {
-                    using CT = casacore::Array<casacore::DComplex>;
-                    CT array;
-                    array.reference(src.asArrayDComplex());
-                    return py::cast<CT>(std::move(array)).release();
+                    using CT = ManagedArray<casacore::DComplex>;
+                    return py::cast<CT>(std::move(CT(src.asArrayDComplex(), false))).release();
                 }
             case casacore::TpArrayString:
                 throw std::runtime_error("Arrays not implemented");
